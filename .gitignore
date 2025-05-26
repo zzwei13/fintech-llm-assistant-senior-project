@@ -3,3 +3,4 @@
 StockNewsCrawling/settings.py
 .env
 venv/
+key.py
