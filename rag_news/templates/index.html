@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="zh-Hant">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ stock_name }} 新聞情緒</title>
+    <style>
+        :root {
+            --bg: #f5f6f8;
+            --card: #fff;
+            --text: #1f2328;
+            --muted: #6b7280;
+            --line: #e5e7eb;
+            --pos: #1a7f37;
+            --pos-bg: #e6f4ea;
+            --neg: #c62828;
+            --neg-bg: #fdecea;
+            --neu: #6b7280;
+            --neu-bg: #f1f3f5;
+            --accent: #2457c5;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font: 15px/1.6 -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+        }
+
+        main {
+            max-width: 1120px;
+            margin: 0 auto;
+            padding: 24px 16px 48px;
+        }
+
+        header {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 18px;
+        }
+
+        h1 {
+            font-size: 24px;
+            margin: 0;
+        }
+
+        h1 small {
+            font-size: 14px;
+            color: var(--muted);
+            font-weight: normal;
+            margin-left: 8px;
+        }
+
+        h2 {
+            font-size: 17px;
+            margin: 0 0 14px;
+        }
+
+        h2 .muted {
+            font-weight: normal;
+            margin-left: 6px;
+        }
+
+        select,
+        button {
+            font: inherit;
+            padding: 6px 10px;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            background: #fff;
+        }
+
+        button {
+            background: var(--accent);
+            color: #fff;
+            border-color: var(--accent);
+            cursor: pointer;
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .muted {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 1px 9px;
+            border-radius: 999px;
+            font-size: 13px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .positive {
+            color: var(--pos);
+            background: var(--pos-bg);
+        }
+
+        .negative {
+            color: var(--neg);
+            background: var(--neg-bg);
+        }
+
+        .neutral {
+            color: var(--neu);
+            background: var(--neu-bg);
+        }
+
+        /* 上方：指標＋趨勢並排 */
+        .top {
+            display: grid;
+            grid-template-columns: 340px 1fr;
+            gap: 16px;
+        }
+
+        .top .card {
+            margin-bottom: 0;
+        }
+
+        .score {
+            font-size: 48px;
+            font-weight: 700;
+            line-height: 1.1;
+        }
+
+        .score .badge {
+            font-size: 15px;
+            vertical-align: middle;
+            margin-left: 6px;
+        }
+
+        .metrics {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        .metric {
+            background: var(--bg);
+            border-radius: 8px;
+            padding: 8px 12px;
+        }
+
+        .metric b {
+            display: block;
+            font-size: 19px;
+        }
+
+        .split {
+            display: flex;
+            height: 10px;
+            border-radius: 999px;
+            overflow: hidden;
+            margin: 14px 0 4px;
+        }
+
+        .split span {
+            display: block;
+        }
+
+        .warn {
+            margin-top: 12px;
+            padding: 8px 12px;
+            background: #fff8e1;
+            border-left: 3px solid #f2b400;
+            font-size: 14px;
+        }
+
+        /* 指標的組成 */
+        .summary {
+            background: var(--bg);
+            border-radius: 8px;
+            padding: 12px 14px;
+            margin-bottom: 18px;
+        }
+
+        .cols {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .col h3 {
+            font-size: 15px;
+            margin: 0 0 10px;
+        }
+
+        .focus {
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 12px 14px;
+            margin-bottom: 10px;
+        }
+
+        .focus .name {
+            font-weight: 700;
+            font-size: 15px;
+        }
+
+        .focus .point {
+            margin: 4px 0 8px;
+            font-size: 14px;
+        }
+
+        .bar {
+            height: 6px;
+            background: var(--bg);
+            border-radius: 999px;
+            overflow: hidden;
+            margin-bottom: 6px;
+        }
+
+        .bar span {
+            display: block;
+            height: 100%;
+            border-radius: 999px;
+        }
+
+        .up .bar span {
+            background: var(--pos);
+        }
+
+        .down .bar span {
+            background: var(--neg);
+        }
+
+        .meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px 10px;
+            align-items: center;
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .net {
+            font-weight: 700;
+            font-size: 13px;
+        }
+
+        .up .net {
+            color: var(--pos);
+        }
+
+        .down .net {
+            color: var(--neg);
+        }
+
+        .ref {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .ref:hover {
+            text-decoration: underline;
+        }
+
+        .empty {
+            color: var(--muted);
+            font-size: 14px;
+            padding: 8px 0;
+        }
+
+        .coverage {
+            margin-top: 6px;
+        }
+
+        /* 引用新聞 */
+        .group {
+            margin-bottom: 16px;
+        }
+
+        .group h4 {
+            font-size: 14px;
+            margin: 0 0 8px;
+        }
+
+        .news {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 10px;
+        }
+
+        .news-card {
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 10px 12px;
+            scroll-margin-top: 16px;
+            font-size: 14px;
+        }
+
+        .news-card:target {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px #dbe5fb;
+        }
+
+        .news-card a.title {
+            color: var(--text);
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .news-card a.title:hover {
+            color: var(--accent);
+        }
+
+        .news-card .reason {
+            font-size: 13px;
+            color: var(--muted);
+            margin-top: 4px;
+        }
+
+        .n {
+            display: inline-block;
+            min-width: 24px;
+            color: var(--accent);
+            font-weight: 700;
+        }
+
+        footer {
+            font-size: 13px;
+            color: var(--muted);
+            text-align: center;
+            margin-top: 24px;
+        }
+
+        @media (max-width: 860px) {
+
+            .top,
+            .cols {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <main>
+        <header>
+            <h1>{{ stock_name }}（{{ stock_id }}）新聞情緒<small>{{ stats.start }} ~ {{ stats.end }}</small></h1>
+            <form method="get">
+                <select name="stock">
+                    {% for s in stocks %}
+                    <option value="{{ s.stock_id }}" {% if s.stock_id==stock_id %}selected{% endif %}>
+                        {{ s.stock_id }} {{ s.stock_name }}（{{ s.n }} 篇）
+                    </option>
+                    {% endfor %}
+                </select>
+                <button type="submit">查看</button>
+            </form>
+        </header>
+
+        {% if stats.score is none %}
+        <section class="card">
+            <p class="muted">期間內沒有以{{ stock_name }}為主角的新聞。</p>
+        </section>
+        {% else %}
+
+        <!-- 區塊 1、2：指標＋趨勢 -->
+        <div class="top">
+            <section class="card">
+                <h2>新聞情緒指標</h2>
+                <div class="score">
+                    {{ "%+.2f"|format(stats.score) }}<span class="badge {{ stats.label }}">{{ tendency[stats.label]
+                        }}</span>
+                </div>
+                <div class="muted">範圍 −1（負面）～ +1（正面），近期新聞權重較高</div>
+                {% set c = stats.counts %}{% set total = c.positive + c.neutral + c.negative %}
+                <div class="split">
+                    <span style="width:{{ 100 * c.positive / total }}%;background:var(--pos)"></span>
+                    <span style="width:{{ 100 * c.neutral / total }}%;background:#c9cdd3"></span>
+                    <span style="width:{{ 100 * c.negative / total }}%;background:var(--neg)"></span>
+                </div>
+                <div class="muted">正面 {{ c.positive }}｜中立 {{ c.neutral }}｜負面 {{ c.negative }} 篇</div>
+                <div class="metrics">
+                    <div class="metric"><span class="muted">近 7 天平均</span>
+                        <b>{{ "%+.2f"|format(stats.avg_7) if stats.avg_7 is not none else "—" }}</b>
+                        <span class="muted">{{ stats.n_7 }} 篇</span>
+                    </div>
+                    <div class="metric"><span class="muted">近 30 天平均</span>
+                        <b>{{ "%+.2f"|format(stats.avg_30) }}</b>
+                        <span class="muted">{{ stats.n_30 }} 篇</span>
+                    </div>
+                </div>
+                {% if not stats.enough %}
+                <div class="warn">30 天內以{{ stock_name }}為主角的新聞少於 {{ min_news }} 篇，僅供參考。</div>
+                {% endif %}
+            </section>
+
+            <section class="card">
+                <h2>近 30 天趨勢<span class="muted">折線：每日平均情緒；長條：每日新聞篇數</span></h2>
+                {{ chart|safe }}
+            </section>
+        </div>
+
+        <!-- 區塊 3：指標的組成 -->
+        <section class="card" style="margin-top:16px">
+            <h2>指標的組成<span class="muted">同一事件或主題的報導合為一個焦點，依對指標的貢獻排序</span></h2>
+            <div class="summary">
+                {{ analysis.summary }}
+                {% if analysis.coverage is not none %}
+                <div class="muted coverage">以下焦點合計解釋指標的 {{ "%.0f"|format(100 * analysis.coverage) }}%；其餘來自其他零散報導。</div>
+                {% endif %}
+            </div>
+
+            <div class="cols">
+                {% for kind, title, empty in [("up", "▲ 推升指標", "近 30 天沒有明顯的正面報導焦點"),
+                ("down", "▼ 拉低指標", "近 30 天沒有明顯的負面報導焦點")] %}
+                <div class="col {{ kind }}">
+                    <h3>{{ title }}</h3>
+                    {% for f in analysis[kind] %}
+                    <div class="focus">
+                        <div class="name">{{ f.name }}</div>
+                        <div class="point">{{ f.point }}</div>
+                        <div class="bar"><span style="width:{{ 100 * (f.net|abs) / max_net }}%"></span></div>
+                        <div class="meta">
+                            <span class="net">貢獻 {{ "%+.3f"|format(f.net) }}</span>
+                            <span>{{ f.n }} 篇報導・{{ f.start[5:] }}～{{ f.end[5:] }}</span>
+                            {% if f.mixed %}<span class="badge neutral">報導看法分歧</span>{% endif %}
+                            <span>{% for r in f.refs[:6] %}<a class="ref" href="#src-{{ r }}">[{{ r }}]</a>{% endfor
+                                %}{% if f.refs|length > 6 %}…{% endif %}</span>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="empty">{{ empty }}</div>
+                    {% endfor %}
+                </div>
+                {% endfor %}
+            </div>
+
+            {% if analysis.neutral %}
+            <h3 style="font-size:15px;margin:10px 0">○ 其他值得注意（不影響指標）</h3>
+            {% for f in analysis.neutral %}
+            <div class="focus">
+                <div class="name">{{ f.name }}</div>
+                <div class="point">{{ f.point }}</div>
+                <div class="meta"><span>{{ f.n }} 篇報導</span>
+                    <span>{% for r in f.refs[:6] %}<a class="ref" href="#src-{{ r }}">[{{ r }}]</a>{% endfor %}</span>
+                </div>
+            </div>
+            {% endfor %}
+            {% endif %}
+        </section>
+
+        <!-- 區塊 4：引用新聞（依焦點分組） -->
+        <section class="card">
+            <h2>引用新聞<span class="muted">依報導焦點分組，附 AI 判斷的情緒與理由</span></h2>
+            {% for kind in ("up", "down", "neutral") %}
+            {% for f in analysis[kind] %}
+            <div class="group">
+                <h4>{{ "▲" if kind == "up" else "▼" if kind == "down" else "○" }} {{ f.name }}</h4>
+                <div class="news">
+                    {% for r in f.refs %}{% set s = sources[r] %}
+                    <div class="news-card" id="src-{{ s.n }}">
+                        <div><span class="n">[{{ s.n }}]</span>
+                            <a class="title" href="{{ s.url }}" target="_blank" rel="noopener">{{ s.title }}</a>
+                        </div>
+                        <div class="muted">{{ s.date }}・{{ source_zh.get(s.source, s.source) }}</div>
+                        <div class="reason"><span class="badge {{ s.label }}">{{ label_zh[s.label] }}</span> {{ s.reason
+                            }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+            {% endfor %}
+        </section>
+        {% endif %}
+
+        <footer>
+            本頁內容整理自公開新聞，情緒指標僅反映新聞報導傾向，不代表股價走勢，亦不構成任何投資建議。<br>
+            模型：{{ model_name }}（相關性、情緒、焦點命名）、bge-m3（焦點分群、證據檢索），皆於本機執行。
+        </footer>
+    </main>
+</body>
+
+</html>
