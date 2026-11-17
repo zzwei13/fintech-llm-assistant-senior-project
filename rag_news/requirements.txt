@@ -1,0 +1,30 @@
+# 新版新聞情緒 RAG 分析（rag_news）
+# 安裝：pip install -r rag_news/requirements.txt
+# 確認可執行後，用 pip freeze > requirements.lock.txt 鎖定實際版本
+
+# 爬蟲
+requests
+beautifulsoup4
+
+# 資料庫（MySQL，不使用ORM）
+pymysql
+python-dotenv
+
+# 情緒模型（nlptown BERT）
+torch
+transformers
+
+# RAG：向量庫、LLM 與 embedding
+#（TAIDE、bge-m3皆由Ollama提供）
+langchain-core
+langchain-ollama
+langchain-chroma
+chromadb
+pydantic
+
+# 情緒彙整與圖表
+pandas
+plotly
+
+# 網頁
+flask

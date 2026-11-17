@@ -1,0 +1,17 @@
+# 機密
+.env
+
+# 可由程式重新產生的資料（含新聞內容與判斷結果）
+chroma_db/
+cache/
+compare/
+backup/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+
+# 系統檔、暫存檔
+.DS_Store
+scratch/
