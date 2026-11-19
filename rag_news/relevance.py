@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
-MODEL = os.getenv("OLLAMA_MODEL", "gemma4:12b")
+MODEL = os.getenv("OLLAMA_MODEL", "taide-8b:latest")
 # prompt 版本：v1 原版；v2 把「盤勢、外資買賣超排行中只是成分股」的新聞判為非主角（compare_models.py 比較用）
 PROMPT_VERSION = os.getenv("RELEVANCE_PROMPT", "v1")
 LEAD_CHARS = 300  # 開頭最多取幾個字
@@ -188,7 +188,17 @@ def classify(stock_id, stock_name, title, content, retries=1, model=None, versio
             by_rule=True,
         )
 
-    # 3. 規則：標題沒提到 → mention，不呼叫模型（主角必須出現在標題）
+    # 3. 規則：「盤中速報」只有即時股價、沒有原因 → mention（和其他盤勢新聞一樣不計入指標）
+    #    實測：台積電 2026-10-21～11-19「ADR 盤中下跌 5%」這類速報成了拉低指標的第一名，
+    #    排在「重大職災致 6 死」之前；同類的「大漲 5%」速報也被算成利多
+    if title.startswith("盤中速報"):
+        return Relevance(
+            reason="盤中速報：只有即時股價，沒有說明原因",
+            relevance="mention",
+            by_rule=True,
+        )
+
+    # 4. 規則：標題沒提到 → mention，不呼叫模型（主角必須出現在標題）
     if not in_title:
         return Relevance(
             reason=f"標題未出現公司，內文 {len(hits)} 句提到",
@@ -196,7 +206,7 @@ def classify(stock_id, stock_name, title, content, retries=1, model=None, versio
             by_rule=True,
         )
 
-    # 4. 模型：只判斷是不是主角
+    # 5. 模型：只判斷是不是主角
     inputs = build_inputs(stock_id, stock_name, title, content, hits, in_title)
     last_err = None
     for _ in range(retries + 1):
