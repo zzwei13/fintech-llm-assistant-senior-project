@@ -7,6 +7,8 @@
     ③b llm-sentiment LLM 判斷對該公司的利多／利空／中立（只限 main），主要指標
     ④ index      bge-m3 向量化 → Chroma（main / mention）
     relabel      換模型後全部重新判斷：備份 → 清空 → ②、③b 重跑 → 同步 Chroma → 比較新舊結果
+    update       一鍵增量更新：從最新一篇新聞往前一點開始爬 → ②③③b④ 只處理新新聞 → 預先產生 RAG 快取
+                 → 記錄更新時間（頁面顯示）；適合每天排程執行
 
 用法：
     python ingest.py crawl --stock 2330 --days 30
@@ -19,6 +21,8 @@
     python ingest.py sentiment
     python ingest.py index
     python ingest.py status
+    python ingest.py update                                    # 所有已有新聞的股票，增量更新
+    python ingest.py update --stock 2330 2317                  # 指定股票（新股票會抓近 30 天）
     python ingest.py relabel --stock 2330 2317 2002            # 換模型後全部重跑（會先備份）
     python ingest.py relabel --stock 2330 2317 2002 --resume   # 中斷後接著跑，不再清空
     python ingest.py relabel --stock 2330 2317 --sentiment-only  # 只換情緒 prompt：只重跑情緒
@@ -27,6 +31,7 @@
 import argparse
 import csv
 import glob
+import json
 import os
 import logging
 import time
@@ -52,6 +57,8 @@ log = logging.getLogger("ingest")
 
 
 def run_crawl(stock_ids, days, sources=SOURCES, delay=(0.8, 1.5), batch_size=10):
+    """回傳 {股票代號: 新增篇數}"""
+    added = {}
     end = date.today()
     start = end - timedelta(days=days)
 
@@ -94,6 +101,8 @@ def run_crawl(stock_ids, days, sources=SOURCES, delay=(0.8, 1.5), batch_size=10)
             inserted += db.insert_news(batch)
 
             log.info("【%s %s｜%s】新增 %d 篇", stock_id, stock_name, source, inserted)
+            added[stock_id] = added.get(stock_id, 0) + inserted
+    return added
 
 
 def run_relevance(stock_id=None, limit=None):
@@ -408,6 +417,104 @@ def run_relabel(stock_ids, resume=False, yes=False, sentiment_only=False):
     print("\n下一步：python chain.py --stock <代號> --refresh 重新產生報導焦點")
 
 
+# ---------- 一鍵增量更新 ----------
+
+UPDATE_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "cache", "last_update.json"
+)
+UPDATE_OVERLAP_DAYS = (
+    2  # 從最新一篇新聞往前多抓幾天，補上當時還沒被爬到的新聞（網址重複會自動略過）
+)
+UPDATE_MAX_DAYS = 30
+
+
+def read_update_log():
+    try:
+        with open(UPDATE_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def write_update_log(stock_id, record):
+    data = read_update_log()
+    data[stock_id] = record
+    os.makedirs(os.path.dirname(UPDATE_FILE), exist_ok=True)
+    with open(UPDATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+
+
+def crawl_days(stock_id, source=None):
+    """
+    要往回爬幾天：從「該來源」最新一篇新聞往前 UPDATE_OVERLAP_DAYS 天開始；沒有新聞時抓 UPDATE_MAX_DAYS 天。
+    每個來源分開算：某個來源這次失敗（例如瀏覽器崩潰），下次會從它自己的最新日期補抓，不會被另一個來源蓋過。
+    """
+    latest = db.latest_news_date(stock_id, source)
+    if latest is None:
+        return UPDATE_MAX_DAYS
+    return max(
+        1, min(UPDATE_MAX_DAYS, (date.today() - latest).days + UPDATE_OVERLAP_DAYS)
+    )
+
+
+def run_update(stock_ids=None, sources=SOURCES, delay=(0.8, 1.5), warm_cache=True):
+    """
+    一鍵增量更新。每個階段本來就只處理還沒算過的新聞（相關性、情緒是 NULL、還沒進向量庫），
+    爬蟲遇到已存在的網址也會略過，所以重複執行是安全的；中斷後再跑一次就會接著做。
+    """
+    stock_ids = stock_ids or [s["stock_id"] for s in db.list_stocks_with_news()]
+    if not stock_ids:
+        log.error("沒有指定股票，資料庫也還沒有新聞；請用 --stock 指定")
+        return
+    started = time.time()
+
+    for i, sid in enumerate(stock_ids, 1):
+        name = db.get_stock_name(sid)
+        if name is None:
+            log.error("stocks 表中找不到代號 %s，略過", sid)
+            continue
+        t0 = time.time()
+        log.info(
+            "########## 更新 %d/%d：%s %s ##########", i, len(stock_ids), sid, name
+        )
+
+        added = 0
+        for source in sources:
+            days = crawl_days(sid, source)
+            log.info("%s 往回爬 %d 天", source, days)
+            added += run_crawl([sid], days, sources=[source], delay=delay).get(sid, 0)
+        run_relevance(sid)
+        run_sentiment(sid)  # nlptown baseline，只用來比較
+        run_llm_sentiment(sid)
+        run_index(sid)
+
+        latest = db.latest_news_date(sid)
+        if warm_cache and latest is not None:
+            import chain  # 用到時才匯入（會載入 LangChain、Chroma）
+
+            log.info("預先產生 RAG 快取（結束日 %s）", latest)
+            chain.analyze(sid, name, latest)
+
+        write_update_log(
+            sid,
+            {
+                "updated_at": datetime.now().isoformat(timespec="minutes"),
+                "new_news": added,
+                "latest_news_date": latest,
+            },
+        )
+        log.info(
+            "%s %s 更新完成：新增 %d 篇，最新新聞 %s，花費 %.1f 分鐘",
+            sid,
+            name,
+            added,
+            latest,
+            (time.time() - t0) / 60,
+        )
+
+    log.info("全部更新完成，共花費 %.1f 分鐘", (time.time() - started) / 60)
+
+
 def read_stock_file(path):
     """讀取股票代號清單：一行一個代號，# 開頭為註解，可在代號後加空白與名稱備註。"""
     with open(path, encoding="utf-8") as f:
@@ -483,6 +590,18 @@ def main():
         "--sentiment-only", action="store_true", help="只重跑情緒（換情緒 prompt 時用）"
     )
 
+    p_update = sub.add_parser(
+        "update", help="一鍵增量更新：爬蟲 → 判斷 → 索引 → 預先產生 RAG 快取"
+    )
+    p_update.add_argument(
+        "--stock", nargs="+", help="股票代號，可多個；預設為所有已有新聞的股票"
+    )
+    p_update.add_argument("--source", nargs="+", choices=SOURCES, default=list(SOURCES))
+    p_update.add_argument(
+        "--delay", type=float, nargs=2, default=[0.8, 1.5], metavar=("MIN", "MAX")
+    )
+    p_update.add_argument("--no-cache", action="store_true", help="不預先產生 RAG 快取")
+
     sub.add_parser("status", help="查看各股票的資料完成度")
 
     args = parser.parse_args()
@@ -505,6 +624,14 @@ def main():
         run_index(args.stock)
     elif args.stage == "relabel":
         run_relabel(args.stock, args.resume, args.yes, args.sentiment_only)
+        show_status()
+    elif args.stage == "update":
+        run_update(
+            args.stock,
+            sources=args.source,
+            delay=tuple(args.delay),
+            warm_cache=not args.no_cache,
+        )
         show_status()
     elif args.stage == "status":
         show_status()

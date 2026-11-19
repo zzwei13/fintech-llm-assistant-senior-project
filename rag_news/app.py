@@ -11,9 +11,12 @@ Flask 頁面：新聞情緒指標、30 天趨勢、指標的組成（RAG 報導�
   3. 指標的組成：推升／拉低指標的報導焦點、貢獻、摘要與引用新聞（chain.analyze）
 
 日期區間預設以「該股票最新一篇新聞的日期」為結束日，避免今天還沒有新聞時整頁空白。
+資料由 python ingest.py update 在背景更新（可排程每天執行），頁面只讀已算好的結果，並顯示更新時間。
 RAG 分析第一次產生約需 20 秒，之後讀 cache/；展示前可先執行 python chain.py 預先產生。
 """
 
+import json
+import os
 from datetime import date
 
 from flask import Flask, abort, render_template, request
@@ -28,6 +31,18 @@ app = Flask(__name__)
 LABEL_ZH = {"positive": "正面", "neutral": "中立", "negative": "負面", None: "—"}
 TENDENCY = {"positive": "偏正面", "neutral": "中立", "negative": "偏負面", None: "—"}
 SOURCE_ZH = {"ltn": "自由時報", "cnyes": "鉅亨網"}
+UPDATE_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "cache", "last_update.json"
+)
+
+
+def last_update(stock_id):
+    """ingest.py update 寫下的更新紀錄；沒有紀錄（例如資料是手動匯入的）時回傳 None"""
+    try:
+        with open(UPDATE_FILE, encoding="utf-8") as f:
+            return json.load(f).get(stock_id)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
 
 
 @app.route("/")
@@ -66,6 +81,7 @@ def index():
         tendency=TENDENCY,
         source_zh=SOURCE_ZH,
         min_news=trend.MIN_NEWS,
+        updated=last_update(stock_id),
         model_name=relevance.MODEL.split(":")[0],
     )
 

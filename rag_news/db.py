@@ -1,5 +1,5 @@
 """
-MySQL 連線與存取
+MySQL 連線與存取（PyMySQL，不使用 ORM）
 
 連線設定從 rag_news/.env 讀取：
     DB_HOST=localhost
@@ -305,6 +305,20 @@ def reset_labels(stock_id):
     return n
 
 
+def reset_labels_by_title_prefix(prefix):
+    """新增相關性規則後，清空標題以 prefix 開頭的新聞的相關性與情緒，讓 relevance 階段依新規則重判；回傳篇數。"""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            n = cur.execute(
+                """UPDATE news SET relevance = NULL, relevance_reason = NULL,
+                                   llm_sentiment_label = NULL, llm_sentiment_reason = NULL
+                   WHERE title LIKE %s""",
+                (prefix.replace("%", r"\%") + "%",),
+            )
+        conn.commit()
+    return n
+
+
 def reset_llm_sentiment(stock_id):
     """只清空某檔股票的 LLM 情緒（相關性不動），換情緒 prompt 後重跑用；回傳影響篇數。"""
     with get_connection() as conn:
@@ -376,9 +390,14 @@ def list_stocks_with_news():
         return cur.fetchall()
 
 
-def latest_news_date(stock_id):
-    """某檔股票最新一篇新聞的日期；沒有新聞時回傳 None。"""
+def latest_news_date(stock_id, source=None):
+    """某檔股票最新一篇新聞的日期（可指定來源）；沒有新聞時回傳 None。"""
+    sql = "SELECT MAX(date) AS d FROM news WHERE stock_id = %s"
+    params = [stock_id]
+    if source:
+        sql += " AND source = %s"
+        params.append(source)
     with get_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT MAX(date) AS d FROM news WHERE stock_id = %s", (stock_id,))
+        cur.execute(sql, params)
         row = cur.fetchone()
         return row["d"] if row else None

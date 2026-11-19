@@ -57,6 +57,10 @@ python ingest.py llm-sentiment
 python ingest.py index
 python ingest.py status
 
+# 日常更新（一鍵增量：爬新新聞 → 判斷 → 索引 → 預先產生 RAG 快取，頁面顯示更新時間）
+python ingest.py update                      # 所有已有新聞的股票
+python ingest.py update --stock 2330 2454    # 指定股票；新股票會抓近 30 天
+
 # 換模型或改 prompt 後全部重新判斷（會先備份到 backup/，並同步 Chroma）
 python ingest.py relabel --stock 2330 2317 2002
 python ingest.py relabel --stock 2330 2317 2002 --sentiment-only   # 只重跑情緒
@@ -67,6 +71,16 @@ python chain.py --stock 2330 --end 2026-10-26
 
 # 頁面
 python app.py   # http://127.0.0.1:5001/?stock=2330&end=2026-10-26
+```
+
+## 資料更新
+
+LLM 判斷每篇需要數秒，不適合在使用者點擊時才爬新聞和判斷；所以資料在背景用 `ingest.py update` 更新，頁面只讀已算好的結果與快取，並顯示資料更新時間。`update` 每個階段只處理新新聞，重複執行或中斷後重跑都是安全的。
+
+每天自動更新（macOS／Linux，電腦需開著），例如每天 07:30：
+
+```
+30 7 * * * cd /path/to/rag_news && /path/to/conda/envs/rag-news/bin/python ingest.py update >> update.log 2>&1
 ```
 
 ## 評估

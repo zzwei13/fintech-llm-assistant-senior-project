@@ -354,7 +354,17 @@
 <body>
     <main>
         <header>
-            <h1>{{ stock_name }}（{{ stock_id }}）新聞情緒<small>{{ stats.start }} ~ {{ stats.end }}</small></h1>
+            <div>
+                <h1>{{ stock_name }}（{{ stock_id }}）新聞情緒<small>{{ stats.start }} ~ {{ stats.end }}</small></h1>
+                <div class="muted">
+                    {% if updated %}
+                    資料更新於 {{ updated.updated_at|replace("T", " ") }}（本次新增 {{ updated.new_news }} 篇，最新新聞 {{
+                    updated.latest_news_date }}）
+                    {% else %}
+                    尚無自動更新紀錄（執行 python ingest.py update 後會顯示更新時間）
+                    {% endif %}
+                </div>
+            </div>
             <form method="get">
                 <select name="stock">
                     {% for s in stocks %}
