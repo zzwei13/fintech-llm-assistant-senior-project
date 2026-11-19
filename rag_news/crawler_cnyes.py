@@ -77,6 +77,9 @@ def _make_driver():
     opt = Options()
     opt.add_argument("--headless=new")
     opt.add_argument("--disable-gpu")
+    opt.add_argument(
+        "--blink-settings=imagesEnabled=false"
+    )  # 不載圖片，降低記憶體用量（減少分頁崩潰）
     opt.add_argument(f"user-agent={HEADERS['User-Agent']}")
     # 不等廣告、圖片等資源全部載完，HTML 解析完成就繼續（避免卡在載不完的第三方資源）
     opt.page_load_strategy = "eager"
@@ -86,10 +89,17 @@ def _make_driver():
 
 
 def _collect_links(driver, found):
-    """把目前頁面上的文章連結加入 found（id → 網址），回傳新增的數量。"""
+    """
+    把目前頁面上的文章連結加入 found（id → 網址），回傳新增的數量。
+    用一次 JavaScript 取出所有網址，不逐一讀取元素：捲動載入時頁面會重繪，
+    逐一讀取容易遇到 StaleElementReferenceException（元素已被移除）。
+    """
     new = 0
-    for a in driver.find_elements("css selector", "a[href]"):
-        href = (a.get_attribute("href") or "").split("?")[0]
+    hrefs = driver.execute_script(
+        "return Array.from(document.querySelectorAll('a[href]'), a => a.href);"
+    )
+    for href in hrefs or []:
+        href = (href or "").split("?")[0]
         aid = _article_id(href)
         if aid and aid not in found:
             found[aid] = href
@@ -209,10 +219,68 @@ def _parse_html(html, url):
     }, ""
 
 
+RESTART_EVERY = 50  # 每渲染幾篇就重開瀏覽器，避免長時間執行記憶體累積導致崩潰
+
+
+class DriverBox:
+    """
+    Selenium 瀏覽器的容器：用到時才開啟；瀏覽器崩潰（invalid session id、disconnected）時自動重開，
+    並且每渲染 RESTART_EVERY 篇主動重開一次。
+    否則瀏覽器一旦崩潰，後面所有需要渲染的文章都會失敗。
+    """
+
+    def __init__(self):
+        self.driver = None
+        self.renders = 0
+
+    def get(self):
+        if self.driver is None or self.renders >= RESTART_EVERY:
+            self.restart()
+        self.renders += 1
+        return self.driver
+
+    def restart(self):
+        self.quit()
+        self.driver = _make_driver()
+        self.renders = 0
+
+    def quit(self):
+        if self.driver is not None:
+            try:
+                self.driver.quit()
+            except Exception:
+                pass
+            self.driver = None
+
+
+def _is_dead_session(e):
+    msg = str(e).lower()
+    return (
+        "invalid session id" in msg or "disconnected" in msg or "no such window" in msg
+    )
+
+
+def _render(url, box, render_wait):
+    from selenium.common.exceptions import TimeoutException
+
+    driver = box.get()
+    try:
+        driver.get(url)
+    except TimeoutException:
+        log.debug("頁面載入逾時，改用已載入的內容：%s", url)  # 正文通常已經出現
+    deadline = time.time() + render_wait
+    while time.time() < deadline:  # 等到正文段落出現
+        if driver.find_elements("css selector", "article p"):
+            break
+        time.sleep(0.5)
+    time.sleep(0.5)
+    return _parse_html(driver.page_source, url)
+
+
 def parse_article(url, driver=None, render_wait=8):
     """
-    解析單篇文章：先用 requests；內容不完整且有提供 driver 時，改用 Selenium 渲染後再解析。
-    欄位仍不完整時回傳 None。
+    解析單篇文章：先用 requests；內容不完整且有提供 driver（DriverBox）時，改用 Selenium 渲染後再解析。
+    瀏覽器崩潰時重開一次再試。欄位仍不完整時回傳 None。
     """
     try:
         resp = session.get(url, timeout=10)
@@ -222,24 +290,19 @@ def parse_article(url, driver=None, render_wait=8):
         article, reason = None, f"請求失敗：{e}"
 
     if article is None and driver is not None:
-        from selenium.common.exceptions import TimeoutException
-
-        try:
+        for attempt in range(2):
             try:
-                driver.get(url)
-            except TimeoutException:
-                log.debug("頁面載入逾時，改用已載入的內容：%s", url)  # 正文通常已經出現
-            deadline = time.time() + render_wait
-            while time.time() < deadline:  # 等到正文段落出現
-                if driver.find_elements("css selector", "article p"):
-                    break
-                time.sleep(0.5)
-            time.sleep(0.5)
-            article, reason = _parse_html(driver.page_source, url)
-            if article:
-                log.debug("改用瀏覽器渲染成功：%s", url)
-        except Exception as e:
-            reason = f"瀏覽器渲染失敗：{e}"
+                article, reason = _render(url, driver, render_wait)
+                if article:
+                    log.debug("改用瀏覽器渲染成功：%s", url)
+                break
+            except Exception as e:
+                reason = f"瀏覽器渲染失敗：{str(e).splitlines()[0][:120]}"  # 只留第一行，不印整段 stacktrace
+                if attempt == 0 and _is_dead_session(e):
+                    log.info("瀏覽器崩潰，重新開啟後重試：%s", url)
+                    driver.restart()
+                    continue
+                break
 
     if article is None:
         log.info("略過（%s）：%s", reason, url)
@@ -264,7 +327,9 @@ def crawl(
     seen_shingles = []
     old_streak = 0
     urls = search_article_urls(keyword, start)
-    driver = _make_driver()  # 內文需要 JavaScript 渲染時的備援
+    box = (
+        DriverBox()
+    )  # 內文需要 JavaScript 渲染時的備援；用到時才開瀏覽器，崩潰時自動重開
 
     try:
         yield from _crawl_urls(
@@ -277,10 +342,10 @@ def crawl(
             delay,
             stop_after_old,
             seen_shingles,
-            driver,
+            box,
         )
     finally:
-        driver.quit()
+        box.quit()
 
 
 def _crawl_urls(
